@@ -210,9 +210,9 @@ def simulateTradeDate(TRADE_DATE:date, ALPHA, NLAGS,universe='IWB',benchmark='SP
     logging.basicConfig(filename=None,level=logging.INFO,format='%(levelname)s %(asctime)s %(message)s',datefmt='%H:%M:%S')
     logging.warning(f'TRADE DATE {TRADE_DATE.strftime("%Y-%m-%d")}' )
     TRAIN_PERIOD_START = TRADE_DATE
-    TRAIN_PERIOD_END = TRAIN_PERIOD_START +  relativedelta(months=6)
+    TRAIN_PERIOD_END = TRAIN_PERIOD_START +  relativedelta(months=6) - relativedelta(days=1)
     TEST_PERIOD_START = TRAIN_PERIOD_END + timedelta(days=1)
-    TEST_PERIOD_END= TEST_PERIOD_START+ relativedelta(months=1)
+    TEST_PERIOD_END= TEST_PERIOD_START+ relativedelta(months=1) - relativedelta(days=1)
 
     logging.debug('Getting data')
     closes = getCleanDataForUniverse(TRAIN_PERIOD_START,TRAIN_PERIOD_END,universe=universe,benchmark=benchmark)
@@ -283,4 +283,4 @@ if __name__ == '__main__':
             allSimResults.append(simResults)
 
     allSimResults = pd.concat(allSimResults)
-    allSimResults.to_csv('c:/temp/SIM_RESULTS_12_8.csv',mode="w+")
+    allSimResults.to_csv('c:/temp/SIM_RESULTS_12_19.csv',mode="w+")
