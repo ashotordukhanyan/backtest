@@ -1,6 +1,6 @@
 import pandas as pd
 
-from market_data.market_data import  get_adj_closes
+from market_data.market_data import  get_adj_closes, get_daily_stats
 from symbology.compositions import get_composition
 from utils.utils import get_trading_month_ends,get_trading_days,get_last_trading_month_end,get_previous_trading_day
 import logging
@@ -44,9 +44,13 @@ def getCleanData(TRAIN_PERIOD_START,TRAIN_PERIOD_END,tickers,benchmark='SPY',rem
     #calculate log returns without grouping - sort by sym,date then calc log ret of consecutive rows and finally correct to NA for rows
     # where sym changes
     closes.sort_values(['sym','date'],inplace=True)
+    closes['prev_c2c'] = np.nan
+    closes['c2c'] = (closes.adjusted_close - closes.adjusted_close.shift(1))/ closes.adjusted_close.shift(1)
+    closes['prev_c2c'] = (closes.adjusted_close.shift(2) - closes.adjusted_close.shift(1)) / closes.adjusted_close.shift(2)
+
     #closes_clean['log_return'] = np.log(closes_clean['adjusted_close']) - np.log(closes_clean['adjusted_close'].shift(1))
-    closes['c2c'] = (closes['adjusted_close']-closes['adjusted_close'].shift(1))/closes['adjusted_close'].shift(1)
-    closes.loc[closes.sym!=closes.sym.shift(1),'c2c']=np.nan
+    #closes['c2c'] = (closes['adjusted_close']-closes['adjusted_close'].shift(1))/closes['adjusted_close'].shift(1)
+    #closes.loc[closes.sym!=closes.sym.shift(1),'c2c']=np.nan
 
     closes.dropna(inplace=True)
 
@@ -67,11 +71,12 @@ def getCleanData(TRAIN_PERIOD_START,TRAIN_PERIOD_END,tickers,benchmark='SPY',rem
             raise Exception(f'Excluded benchmark {benchmark} because of large deviation')
 
         #create new columns c2cdn and o2cdn which will contain c2c - c2c of benchmark and o2c- o2c of benchmark for the same date
-        benchmark_closes = closes[closes.sym==benchmark][['date','sym','c2c','o2c']]
-        benchmark_closes.rename(columns={'sym':'benchmark','c2c':'c2cb','o2c':'o2cb'},inplace=True)
+        benchmark_closes = closes[closes.sym==benchmark][['date','sym','c2c','o2c','prev_c2c']]
+        benchmark_closes.rename(columns={'sym':'benchmark','c2c':'c2cb','o2c':'o2cb','prev_c2c':'prev_c2cb'},inplace=True)
         closes['benchmark'] = benchmark
         closes = closes.merge(benchmark_closes, on=['date', 'benchmark'], how='left')
         closes['c2cdn'] = closes['c2c'] - closes['c2cb']
+        closes['prev_c2cdn'] = closes['prev_c2c'] - closes['prev_c2cb']
         closes['o2cdn'] = closes['o2c'] - closes['o2cb']
         closes = closes[closes.sym!=benchmark] ##remove benchmark itself because it will always have c2cdn=0
     return closes
@@ -202,10 +207,12 @@ def simulate(models: Dict[str, ARIMA], TEST_PERIOD_START, TEST_PERIOD_END,benchm
                 (test_closes.sym == sym) & (test_closes.date == panda_ts), 'model_order'] = str(models[sym].model.order)
             actual = test_closes.loc[(test_closes.sym == sym) & (test_closes.date == panda_ts), target].to_list()
             if len(actual) != 1:
-                raise Exception(f'Expected 1 row got {len(actual)} for {sym} {td}')
+                raise Exception(f'{TEST_PERIOD_START} Expected 1 row got {len(actual)} for {sym} {td}')
             models[sym] = models[sym].append(actual)
     return test_closes
 
+from utils.utils import cached_df
+@cached_df
 def simulateTradeDate(TRADE_DATE:date, ALPHA, NLAGS,universe='IWB',benchmark='SPY')->pd.DataFrame :
     logging.basicConfig(filename=None,level=logging.INFO,format='%(levelname)s %(asctime)s %(message)s',datefmt='%H:%M:%S')
     logging.warning(f'TRADE DATE {TRADE_DATE.strftime("%Y-%m-%d")}' )
@@ -263,7 +270,7 @@ if __name__ == '__main__':
     TIME_STEP=relativedelta(months=1)
     TRADE_DATES = []
     TRADE_DATE = date(2007,1,1)
-    while ( TRADE_DATE < date(2023,1,1) ):
+    while ( TRADE_DATE < date(2023,5,1) ):
         TRADE_DATES.append(TRADE_DATE)
         TRADE_DATE  = TRADE_DATE + TIME_STEP
 
@@ -283,4 +290,4 @@ if __name__ == '__main__':
             allSimResults.append(simResults)
 
     allSimResults = pd.concat(allSimResults)
-    allSimResults.to_csv('c:/temp/SIM_RESULTS_12_19.csv',mode="w+")
+    allSimResults.to_csv('c:/temp/SIM_RESULTS_01_041.csv',mode="w+")

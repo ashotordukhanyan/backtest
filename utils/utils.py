@@ -22,6 +22,15 @@ def _string_key(arg) -> str :
 _KEY_DELIMETER = '_'
 _CACHE_LOC = 'c:/temp/DFCACHE'
 _RETRY_ON_EMPTY = True #TODO CHANGE
+_DISABLED_DF_FUNCS_ = set()
+def disable_df_cache(func):
+    _DISABLED_DF_FUNCS_.add(func.__name__)
+    return func
+
+def enable_df_cache(func):
+    _DISABLED_DF_FUNCS_.remove(func.__name__)
+    return func
+
 def cached_df(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -39,13 +48,15 @@ def cached_df(func):
             logging.debug(f'Cache hit for key {key}')
             return result
         except:
-            logging.debug(f'Cache miss for key {key}')
+            logging.debug(f'Cache miss for key {key} file {fname}')
             result = func(*args,**kwargs)
             if result is not None:
                 if not isinstance(result,pd.DataFrame):
                     raise Exception(f'Expected dataframe got {type(result)}')
                 result.to_pickle(fname)
                 return result
+    if func.__name__ in _DISABLED_DF_FUNCS_:
+        return func
     return wrapper
 
 def end_of_month(d: date)-> date:

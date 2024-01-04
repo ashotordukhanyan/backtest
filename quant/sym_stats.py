@@ -8,13 +8,12 @@ from tqdm import tqdm
 from typing import List
 from utils.utils import get_previous_trading_day
 from market_data.market_data import _kdbdt
-logging.basicConfig(filename=None,level=logging.INFO,format='%(levelname)s %(message)s')
 
 MDROOT="c:/KDB_MARKET_DATA2/"
 def get_md(syms:List[str],SD:date,ED:date)->pd.DataFrame:
     with get_md_conn() as q:
         md = q.sendSync(
-            '{[syms;sd;ed] select date,sym,`float$volume,adjusted_close from eodhd_price where date>=sd,date<=ed,sym in `$syms,volume>0}',
+            '{[syms;sd;ed] select date,sym,`float$volume,dvolume:close*volume, adjusted_close from eodhd_price where date>=sd,date<=ed,sym in `$syms,volume>0}',
                 syms,_kdbdt(SD),_kdbdt(ED))
     # NB cast to float needed because returning int from kdb triggers some qpython pandas integration bug
     md['sym'] = md.sym.str.decode('utf-8')
@@ -35,14 +34,14 @@ def _sendSync(qcode,*parameters):
         q.sendSync(qcode,*parameters)
 
 _STATS_META = MetaData(asof_date=qtemporal.QDATE,date=qtemporal.QDATE, sym=qtemporal.QSYMBOL, year=qtemporal.QLONG)
-for f in 'lr_vol ar_vol ADV ar_beta'.split():
+for f in 'lr_vol ar_vol ADV ADVD ar_beta'.split():
     _STATS_META[f]=qtemporal.QFLOAT
 
 def initQ(year: int):
     QCODE = f'''
-        $[ not `daily_stats in key `.;
+        $[ not `daily_statsREMOVEME in key `.;
             [ 
-                daily_stats :([ sym:`symbol$();date:`date$();year:`long$()] lr_vol:`real$();ar_vol:`real$();ADV:`real$();ar_beta:`real$();asof_date:`date$());
+                daily_stats :([ sym:`symbol$();date:`date$();year:`long$()] lr_vol:`real$();ar_vol:`real$();ADV:`real$();ADVD:`real$();ar_beta:`real$();asof_date:`date$());
                 daily_stats_upd :`sym`date xkey (select from daily_stats );
             ];
             [ daily_stats_upd :`sym`date xkey (select from daily_stats where year = {year:d}); ]
@@ -86,13 +85,18 @@ def calc_yearly_stats(year:int):
     MD_ED = date(year,12,31)
     BATCH_SIZE=500
     ASOF_DATE = date.today()
+    logging.info(f'Getting benchmark market data symbols')
     benchmark_md = get_md(['SPY'],MD_SD,MD_ED).set_index('date')
-
+    logging.info(f'Getting market data')
     md = get_md(universe,MD_SD,MD_ED)
+    logging.info(f'Done getting market data')
+
     md['lr_vol'] = md.groupby('sym')['log_return'].apply(lambda x: x.rolling(252,min_periods=252).std()).reset_index(level=0,drop=True)
     md['ar_vol'] = md.groupby('sym')['a_return'].apply(
         lambda x: x.rolling(252, min_periods=252).std()).reset_index(level=0, drop=True)
     md['ADV'] = md.groupby('sym')['volume'].apply(
+        lambda x: x.rolling(21, min_periods=21).median()).reset_index(level=0, drop=True)
+    md['ADVD'] = md.groupby('sym')['dvolume'].apply(
         lambda x: x.rolling(21, min_periods=21).median()).reset_index(level=0, drop=True)
     md['asof_date'] = pd.to_datetime(ASOF_DATE)
     ##join md and benchmark to get benchmark adjusted returns
@@ -109,5 +113,6 @@ def calc_yearly_stats(year:int):
     return md[md.year==year]
 
 if __name__ == '__main__':
-    for year in tqdm(range(2000,2024)):
+    logging.basicConfig(filename=None,level=logging.INFO,format='%(levelname)s %(asctime)s %(message)s',datefmt='%H:%M:%S')
+    for year in tqdm(range(2020,2024)):
         calc_and_store_yearly_stats(year)

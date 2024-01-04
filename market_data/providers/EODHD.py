@@ -23,9 +23,10 @@ def tpatchmissing(num_threads:int = 1,start_date=date(2000, 1, 1),end_date=date(
         p = q.sendSync(
             f'''select asc distinct date from eodhd_price where year >= {start_date.year},
             date >= {start_date.strftime("%Y.%m.%d")}, date <= {end_date.strftime("%Y.%m.%d")}''')
-    trading_days = sorted(get_trading_days('NYSE',date(2000,1,1),date(2023,9,1)))
+    trading_days = sorted(get_trading_days('NYSE',start_date,end_date))
     vd = set(p.date[0].dt.date) #valid days
     missing_days = [ d for d in trading_days if d not in vd]
+    logging.info(f'Got {len(missing_days)} missing days - {missing_days}')
     download_dates(num_threads,apic,missing_days)
 #    dates = get_trading_days('NYSE', start_date, end_date)
 #    return download_dates(num_threads,apic,dates)
@@ -182,4 +183,7 @@ def _sendSync(qcode,*parameters):
 if __name__ == '__main__':
     #asyncio.run(amain(),debug=True)
     #tmain(start_date=date(2000,1,1),end_date=date(2001,12,31), num_threads=25)
-    tpatchmissing(start_date=date(2000, 1, 1), end_date=date(2023, 9, 1), num_threads=25)
+    #tmain(start_date=date(2023, 9, 1), end_date=date(2023, 12, 31), num_threads=25)
+    #tpatchmissing(start_date=date(2023, 1, 1), end_date=date(2023, 12, 31), num_threads=25)
+    with requests_cache.disabled():
+        tpatchmissing(start_date=date(2023, 9, 1), end_date=date(2023, 12, 31), num_threads=1)

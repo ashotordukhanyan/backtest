@@ -78,8 +78,9 @@ def get_daily_stats(tbl:pd.DataFrame) -> pd.DataFrame:
     '''Calculate daily stats for a given dataframe of dates and syms'''
     with get_md_conn() as q:
         res = q.sendSync(
-            "{[tbl] (select `date$date, `sym$sym from tbl) lj (`sym`date xkey select sym,date,ar_vol,ar_beta,ADV from daily_stats) }",
+            "{[tbl] (select `date$date, `sym$sym from tbl) lj (`sym`date xkey select sym,date,ar_vol,ar_beta,ADV,ADVD from daily_stats) }",
             tbl[['date', 'sym']])
     res['sym'] = res.sym.str.decode('utf-8')
     return res
+
 
