@@ -61,17 +61,28 @@ def get_price_volume(syms:List[str],start_date:date,end_date:date)->pd.DataFrame
     res['sym'] = res.sym.str.decode('utf-8')
     return res
 
+MISSING_DATA = pd.DataFrame([
+    dict(sym='OIH', date=date(2011,12,30),open=759.60,high=770.60,low=759.47,close=765.87,adjusted_close=627.41,volume=121245,o2c=0.008254),
+])
+
 def get_adj_closes(syms:List[str],start_date:Optional[date]=None,end_date:Optional[date]=None,check_volume:bool = True )->pd.DataFrame:
     start_date = start_date or date.min
     end_date = end_date or date.max
     vcheck = '' if not check_volume else ',volume>0'
     query = f'{{[syms;sd;ed] \
-                select date,sym,adjusted_close,o2c:(close-open)%open from eodhd_price where date>=sd,date<=ed,sym in `$syms {vcheck} }}'
+                select date,sym,adjusted_close,o2c:(close-open)%open,`float$volume from eodhd_price where date>=sd,date<=ed,sym in `$syms {vcheck} }}'
 
     with get_md_conn() as q:
         res = q.sendSync(query, syms,_kdbdt(start_date),_kdbdt(end_date))
     #cast volume to float - workaround qpython serilization bug
     res['sym'] = res.sym.str.decode('utf-8')
+    #ADD MISSING DATA
+    missing = MISSING_DATA[MISSING_DATA.sym.isin(syms) & (MISSING_DATA.date >= start_date) & (MISSING_DATA.date <= end_date)]
+    if len(missing):
+        ##append missing to res
+        missing['date'] = missing.date.astype('datetime64[s]')
+        res = pd.concat([res, missing[['date','sym','adjusted_close','o2c','volume']]] )
+        res.reset_index(inplace=True,drop=True)
     return res
 
 def get_daily_stats(tbl:pd.DataFrame) -> pd.DataFrame:

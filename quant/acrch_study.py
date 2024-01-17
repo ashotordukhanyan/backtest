@@ -20,13 +20,12 @@ from multiprocessing import Pool, freeze_support
 def getCleanDataForUniverse(TRAIN_PERIOD_START,TRAIN_PERIOD_END,universe='IWB',benchmark='SPY',remove_outliers=True):
     comp = get_composition(universe,get_last_trading_month_end(TRAIN_PERIOD_END))
     tickers = sorted(comp.ticker.unique())
-    if benchmark is not None and benchmark not in tickers:
-        tickers.append(benchmark)
     return getCleanData(TRAIN_PERIOD_START,TRAIN_PERIOD_END,tickers,benchmark=benchmark,remove_outliers=remove_outliers)
 
 def getCleanData(TRAIN_PERIOD_START,TRAIN_PERIOD_END,tickers,benchmark='SPY',remove_outliers=True):
     if benchmark is not None and benchmark not in tickers:
         tickers.append(benchmark)
+
     closes = get_adj_closes(tickers,TRAIN_PERIOD_START,TRAIN_PERIOD_END)
 
     logging.info(f'Got {closes.shape[0]} rows of data for {len(tickers)} requested tickers - {len(closes.sym.unique())} received tickers')
@@ -40,13 +39,17 @@ def getCleanData(TRAIN_PERIOD_START,TRAIN_PERIOD_END,tickers,benchmark='SPY',rem
         logging.fatal(f'Excluded benchmark {benchmark}')
         raise Exception(f'Excluded benchmark {benchmark}')
     logging.info(f'Excluded {len(excluded_syms)} symbols with missing data: {",".join(sorted(excluded_syms))} ')
+    logging.info(f'Excluded {len(excluded_syms)} symbols with missing data: {",".join(sorted(excluded_syms))} ')
 
     #calculate log returns without grouping - sort by sym,date then calc log ret of consecutive rows and finally correct to NA for rows
     # where sym changes
     closes.sort_values(['sym','date'],inplace=True)
     closes['prev_c2c'] = np.nan
-    closes['c2c'] = (closes.adjusted_close - closes.adjusted_close.shift(1))/ closes.adjusted_close.shift(1)
-    closes['prev_c2c'] = (closes.adjusted_close.shift(2) - closes.adjusted_close.shift(1)) / closes.adjusted_close.shift(2)
+    closes['c2c'] = np.nan
+    closes['prev_volume'] = np.nan
+    closes.loc[closes.sym == closes.sym.shift(1),'prev_volume'] = closes.volume.shift(1)
+    closes.loc[closes.sym == closes.sym.shift(1),'c2c'] = (closes.adjusted_close - closes.adjusted_close.shift(1))/ closes.adjusted_close.shift(1)
+    closes.loc[closes.sym == closes.sym.shift(2),'prev_c2c'] = (closes.adjusted_close.shift(1) - closes.adjusted_close.shift(2)) / closes.adjusted_close.shift(2)
 
     #closes_clean['log_return'] = np.log(closes_clean['adjusted_close']) - np.log(closes_clean['adjusted_close'].shift(1))
     #closes['c2c'] = (closes['adjusted_close']-closes['adjusted_close'].shift(1))/closes['adjusted_close'].shift(1)
@@ -55,20 +58,25 @@ def getCleanData(TRAIN_PERIOD_START,TRAIN_PERIOD_END,tickers,benchmark='SPY',rem
     closes.dropna(inplace=True)
 
     if remove_outliers:
+        KNOWN_ETFS = set('SPY RTH XLF XLY XLP SMH XLI XLU XLV KRE IYR OIH XLK IYT XLE QQQ'.split())
+
         #remove "penny stocks" - stocks whose price dips below 1$ ever
         closes = closes.groupby('sym').filter(lambda x: x.adjusted_close.min()>1.)
 
         #remove outliers
         sym_stats=closes.groupby(['sym'], as_index=True)['c2c'].agg(['mean','std'])
         NUM_SD=3
-        outliers = sym_stats[ (sym_stats["mean"].abs()>NUM_SD*sym_stats["mean"].std()) | (sym_stats["std"]>NUM_SD*sym_stats["std"].std())]
+        isEtf = sym_stats.index.isin(KNOWN_ETFS)
+        meanTooBig = sym_stats["mean"].abs()>NUM_SD*sym_stats["mean"].std()
+        meanTooWild = sym_stats["std"] > 2* NUM_SD * sym_stats["std"].std()
+        outliers = sym_stats[ ~isEtf & (meanTooBig | meanTooWild)]
         logging.info(f'Excluded {len(outliers)} symbols with outlier returns: {",".join(sorted(outliers.index))} ')
         closes = closes[~closes.sym.isin(outliers.index)]
 
     if benchmark is not None:
         if benchmark not in  closes.sym.unique():
-            logging.fatal(f'Excluded benchmark {benchmark} because of large deviation')
-            raise Exception(f'Excluded benchmark {benchmark} because of large deviation')
+            logging.fatal(f'Excluded benchmark {benchmark} because of data quality')
+            raise Exception(f'Excluded benchmark {benchmark} because of data quality')
 
         #create new columns c2cdn and o2cdn which will contain c2c - c2c of benchmark and o2c- o2c of benchmark for the same date
         benchmark_closes = closes[closes.sym==benchmark][['date','sym','c2c','o2c','prev_c2c']]
@@ -181,8 +189,8 @@ def simulate(models: Dict[str, ARIMA], TEST_PERIOD_START, TEST_PERIOD_END,benchm
                         datefmt='%H:%M:%S')
     test_syms = sorted(list(models.keys()))
 
-    test_closes = getCleanData(get_previous_trading_day(TEST_PERIOD_START), TEST_PERIOD_END, test_syms,benchmark,False)
-     ##getting prev to get returns for first day
+    test_closes = getCleanData(get_previous_trading_day(TEST_PERIOD_START,days_back=2), TEST_PERIOD_END, test_syms,benchmark,False)
+     ##getting prev to get returns andd prev returns for first day
 
     test_syms = sorted(list(test_closes.sym.unique())) ## some symbols may have been excluded because of missing data
     predCol = f'predicted_{target}'
@@ -213,7 +221,7 @@ def simulate(models: Dict[str, ARIMA], TEST_PERIOD_START, TEST_PERIOD_END,benchm
 
 from utils.utils import cached_df
 @cached_df
-def simulateTradeDate(TRADE_DATE:date, ALPHA, NLAGS,universe='IWB',benchmark='SPY')->pd.DataFrame :
+def simulateTradeDate(TRADE_DATE:date, ALPHA, NLAGS,universe='IWB',benchmark='SPY',codever=0)->pd.DataFrame :
     logging.basicConfig(filename=None,level=logging.INFO,format='%(levelname)s %(asctime)s %(message)s',datefmt='%H:%M:%S')
     logging.warning(f'TRADE DATE {TRADE_DATE.strftime("%Y-%m-%d")}' )
     TRAIN_PERIOD_START = TRADE_DATE
@@ -273,21 +281,20 @@ if __name__ == '__main__':
     while ( TRADE_DATE < date(2023,5,1) ):
         TRADE_DATES.append(TRADE_DATE)
         TRADE_DATE  = TRADE_DATE + TIME_STEP
-
     allSimResults = []
     PARRALEL = 8
     ALPHA = .05
     NLAGS = 5
     if PARRALEL>1:
-        distFunc = functools.partial(simulateTradeDate,ALPHA=ALPHA,NLAGS=NLAGS,universe='IWV')
+        distFunc = functools.partial(simulateTradeDate,ALPHA=ALPHA,NLAGS=NLAGS,universe='IWV',codever=20240108)
         with Pool(PARRALEL) as p:
             allSimResults = p.map(distFunc, TRADE_DATES)
             #allSimResults = p.map(simulate, TRADE_DATES)
     else:
         for TRADE_DATE in TRADE_DATES:
-            simResults = simulateTradeDate(TRADE_DATE, ALPHA, NLAGS,universe='IWV')
+            simResults = simulateTradeDate(TRADE_DATE, ALPHA, NLAGS,universe='IWV',codever=20240108)
             TRADE_DATE  = TRADE_DATE + TIME_STEP
             allSimResults.append(simResults)
 
     allSimResults = pd.concat(allSimResults)
-    allSimResults.to_csv('c:/temp/SIM_RESULTS_01_041.csv',mode="w+")
+    allSimResults.to_csv('c:/temp/SIM_RESULTS_01_08.csv',mode="w+")
