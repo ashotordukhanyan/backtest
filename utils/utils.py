@@ -107,3 +107,16 @@ def get_previous_trading_day(adate:date,days_back:int=1, exchange_code:str='NYSE
     cal = mcal.get_calendar(exchange_code)
     date = adate - pd.tseries.offsets.CustomBusinessDay(days_back, holidays=cal.holidays().holidays)
     return date.to_pydatetime().date()
+
+
+from time import perf_counter
+from contextlib import ContextDecorator
+class TimeMe(ContextDecorator):
+    def __init__(self, msg):
+        self.msg = msg
+    def __enter__(self):
+        self.time = perf_counter()
+        return self
+    def __exit__(self, type, value, traceback):
+        elapsed = perf_counter() - self.time
+        print(f'{self.msg} took {elapsed:.3f} seconds')

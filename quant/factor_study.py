@@ -32,7 +32,7 @@ def getStockEtfCleanData(TRAIN_PERIOD_START,TRAIN_PERIOD_END,universe='IWB',etfs
 from utils.utils import cached_df
 @cached_df
 def simulateOneTradeDate(TRADE_DATE:date,HEDGE_ETFS_PER_NAME = 3,SIG_CUTOFF=1.0, BETA_R_ALPHA=.0001, universe='IWB',codever=0)->pd.DataFrame :
-    logging.basicConfig(filename=None,level=logging.INFO,format='%(levelname)s %(asctime)s %(message)s',datefmt='%H:%M:%S')
+    logging.basicConfig(filename=None,level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',datefmt='%H:%M:%S')
     logging.warning(f'TRADE DATE {TRADE_DATE.strftime("%Y-%m-%d")}' )
     TRAIN_PERIOD_START = TRADE_DATE
     TRAIN_PERIOD_END = TRAIN_PERIOD_START +  relativedelta(months=6) - relativedelta(days=1)
@@ -42,6 +42,7 @@ def simulateOneTradeDate(TRADE_DATE:date,HEDGE_ETFS_PER_NAME = 3,SIG_CUTOFF=1.0,
     FACTOR_ETFS = 'SPY RTH XLF XLY XLP SMH XLI XLU XLV KRE IYR OIH XLK IYT XLE QQQ'.split()
     data = getStockEtfCleanData(TRAIN_PERIOD_START, TRAIN_PERIOD_END, universe, FACTOR_ETFS)
     data['date'] = data.date.astype("datetime64[s]")
+
     daily = data.pivot(index='date',columns='sym',values='c2c')
     corr = daily.corr()
 
@@ -73,35 +74,38 @@ def simulateOneTradeDate(TRADE_DATE:date,HEDGE_ETFS_PER_NAME = 3,SIG_CUTOFF=1.0,
                              get_previous_trading_day(TEST_PERIOD_END, days_back=-5),
                              sorted(list(set(stocks+FACTOR_ETFS))), remove_outliers=False,benchmark=None)
     test_data['date'] = test_data.date.astype("datetime64[s]")
-    ##Add c2c shifted forward by 1-5 days for test_data
-    for i in range(0,6):
-        test_data[f'c2c_{i}'] = np.nan
-        test_data.loc[test_data.sym == test_data.sym.shift(1), f'c2c_{i}'] = test_data.c2c.shift(-1*i)
+    test_stocks = sorted(set(test_data.sym.unique()) - set(FACTOR_ETFS))
+    #index by date, etf(columns) c2c returns
+    etf_returns = test_data[test_data.sym.isin(FACTOR_ETFS)].pivot(index='date', columns='sym', values='c2c')
+    ##add column for ETF returns by date
+    test_data = test_data[~test_data.sym.isin(FACTOR_ETFS)].merge(etf_returns, left_on='date', right_index=True, how='left')
+    ##add column for hedge ETF weithgs by symbol
+    test_data = test_data.merge(lrcf.rename(columns=lambda x:x+"_hw"), left_on='sym',right_index=True, how='left')
+    test_data['factor_c2c'] = test_data.apply(lambda r: sum([r[f] * r[f'{f}_hw'] for f in FACTOR_ETFS]), axis=1)
+    test_data['excess_c2c'] = test_data.c2c - test_data.factor_c2c
+    ##add calibrated O-U process params
+    test_data = test_data.merge(params, left_on='sym', right_index=True, how='left')
+    test_data['signal'] = (test_data.excess_c2c-test_data.gamma)/test_data.sigma_equilibrium
+    test_data['prev_signal'] = test_data.signal.shift(1).fillna(0)
+    LOOK_AHEAD_DAYS = 6
+    for i in range(0,LOOK_AHEAD_DAYS):
+        test_data[f'T{i}_factor_c2c'] = np.nan
+        test_data.loc[test_data.sym == test_data.sym.shift(-i), f'T{i}_factor_c2c'] = test_data.factor_c2c.shift(-i)
+        test_data[f'T{i}_excess_c2c'] = np.nan
+        test_data.loc[test_data.sym == test_data.sym.shift(-i), f'T{i}_excess_c2c'] = test_data.excess_c2c.shift(-i)
+        test_data[f'T{i}_signal'] = np.nan
+        test_data.loc[test_data.sym == test_data.sym.shift(-i), f'T{i}_signal'] = test_data.signal.shift(-i)
 
-    test_daily = test_data.pivot(index='date',columns='sym',values='c2c')
-    test_stocks = sorted(list(set(test_daily.columns) - set(FACTOR_ETFS)))
-    test_excessReturns = test_daily[test_stocks]-test_daily[FACTOR_ETFS].dot(lrcf.loc[test_stocks].T)
-    #signal S is calculated as (X[t]-gamma)/sigma_eq
-    def calcSignal(X:pd.Series,p:pd.DataFrame)->pd.Series:
-        ##X is a series of excess returns
-        ##p is pre-calibrated OU params per stock
-        sp = p.loc[X.name] #stock params
-        return (X-sp.gamma)/sp.sigma_equilibrium
+    columns_to_keep = ['date', 'sym', 'adjusted_close', 'o2c', 'volume', 'prev_c2c', 'c2c',
+       'prev_volume', 'factor_c2c', 'excess_c2c', 'alpha', 'gamma', 'beta',
+       'characteristic_time', 'sigma_equilibrium', 'signal', 'prev_signal'] + \
+                       [f'T{i}_factor_c2c' for i in range(LOOK_AHEAD_DAYS)] + \
+                          [f'T{i}_excess_c2c' for i in range(LOOK_AHEAD_DAYS)] + \
+                            [f'T{i}_signal' for i in range(LOOK_AHEAD_DAYS)]
 
-    test_signals = test_excessReturns.apply(calcSignal,axis=0,args=(params,))
-    #train_signals = excessReturns.apply(calcSignal,axis=0,args=(params,))
-
-    #create a datafrane with all of the results
-    #to start with - signals
-    result = test_signals.unstack().reset_index().rename(columns={0:'signal'})
-    ## add excess returns
-    result = result.merge(test_excessReturns.unstack().reset_index().rename(columns={0:'excess_c2c'}),on=['date','sym'],how='left')
-    ##add params
-    result = result.merge(params,left_on='sym',right_index=True,how='left')
-    ##add actual c2c,volume,closes etc
-    result = result.merge(test_data,on=['date','sym'],how='left')
-    result['prev_signal']=result.signal.shift(1).fillna(0)
-    return result[(result.date.between(TEST_PERIOD_START,TEST_PERIOD_END)) & (result.prev_signal.abs()>=SIG_CUTOFF)]
+    result = test_data[(test_data.date.between(pd.to_datetime(TEST_PERIOD_START), pd.to_datetime(TEST_PERIOD_END)))]
+    #result = test_data[(test_data.date.between(pd.to_datetime(TEST_PERIOD_START),pd.to_datetime(TEST_PERIOD_END) )) & (test_data.prev_signal.abs() >= SIG_CUTOFF)][columns_to_keep]
+    return result
 
 
 def run_study():
@@ -116,20 +120,20 @@ def run_study():
         TRADE_DATE  = TRADE_DATE + TIME_STEP
 
     allSimResults = []
-    PARRALEL = 1
+    PARRALEL = 8
     if PARRALEL>1:
-        distFunc = functools.partial(simulateOneTradeDate,HEDGE_ETFS_PER_NAME = 1,SIG_CUTOFF=1.0, BETA_R_ALPHA=.0001,codever=20240111)
+        distFunc = functools.partial(simulateOneTradeDate,HEDGE_ETFS_PER_NAME = 1,SIG_CUTOFF=1.0, BETA_R_ALPHA=.0001,codever=20240118)
         with Pool(PARRALEL) as p:
             allSimResults = p.map(distFunc, TRADE_DATES)
             #allSimResults = p.map(simulate, TRADE_DATES)
     else:
         for TRADE_DATE in TRADE_DATES:
-            simResults = simulateOneTradeDate(TRADE_DATE,HEDGE_ETFS_PER_NAME = 1,SIG_CUTOFF=1.0, BETA_R_ALPHA=.0001,codever=20240111)
+            simResults = simulateOneTradeDate(TRADE_DATE,HEDGE_ETFS_PER_NAME = 1,SIG_CUTOFF=1.0, BETA_R_ALPHA=.0001,codever=20240118)
             TRADE_DATE  = TRADE_DATE + TIME_STEP
             allSimResults.append(simResults)
 
     allSimResults = pd.concat(allSimResults)
-    allSimResults.to_csv('c:/temp/FACTOR_SIM_RESULTS_01_11.csv',mode="w+")
+    allSimResults.to_csv('c:/temp/FACTOR_SIM_RESULTS_01_18.csv.gz',index=False, compression='gzip' ,  mode="w+")
 
 
 if __name__ == '__main__':

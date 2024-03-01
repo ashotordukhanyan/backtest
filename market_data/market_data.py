@@ -45,7 +45,7 @@ def get_all_syms(start_date:Optional[date]=None,end_date:Optional[date]=None)->L
     end_date = end_date or date.max
 
     with get_md_conn() as q:
-        res = q.sendSync('{ [sd;ed] select distinct sym from eodhd_price where year>=`year$sd,year<=`year$ed, date>=sd, date<=ed}',_kdbdt(start_date),_kdbdt(end_date))
+        res = q.sendSync('{ [sd;ed] select distinct sym from eodhd_price where year>=`year$sd,year<=`year$ed, date>=sd, date<=ed, volume>0}',_kdbdt(start_date),_kdbdt(end_date))
     return [x.decode() for x in res.sym]
 
 def _kdbdt(d:date)-> np.datetime64:
