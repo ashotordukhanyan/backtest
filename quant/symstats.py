@@ -43,7 +43,7 @@ def calculate_rolling_betas(mrets: pd.DataFrame ):
     return result
 
 
-class Betas(DataGrid):
+class SymStats(DataGrid):
     _SCHEMA = [
         ColumnDef('sym',CT.SYMBOL, isKey=True),
         ColumnDef('date', CT.DATE, isKey=True),
@@ -145,8 +145,33 @@ class Betas(DataGrid):
         all_betas = pd.concat(all_betas)
         return all_betas
 
+    def enrichWithSymStats(self, trades, columns=[]) ->pd.DataFrame:
+        ''' Enrich trades with symbol level statitics
+            :param trades: trades dataframe wich sym and date columns
+        '''
+        assert 'date' in trades.columns
+        assert 'sym' in trades.columns
+        temp = trades[['date','sym']].copy()
+        temp['date']=temp.date.apply(_kdbdt)
+        temp.meta = self.getqpythonMetaData()
+        qcode = f'''
+        {{
+        [trades]
+        trades: select sym,`date$date from trades;
+        .temp:select {self.getColumnsWithCasts(columns)} from {self.name_} where sym in (exec sym from trades);
+        aj[`sym`date;trades;.temp]
+        }}
+        '''
+        with get_md_conn() as q:
+            data = self._sendSync(q, qcode, temp)
+        data = self.castToPython(data)
+        return pd.merge(trades, data, on=['sym', 'date'], how='left')
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG,format='%(asctime)s %(levelname)s %(message)s')
-    b = Betas()
-    b.calcAndStoreSymStats(2000,2023)
+    ss = SymStats()
+    #ss.calcAndStoreSymStats(2000,2023)
+    trades = pd.DataFrame({'sym': ["IBM", "GS"], 'date': [date(2022, 7, 13), date(2022, 8, 13)]})
+    data = ss.enrichWithSymStats(trades, [] )
+    print(data)

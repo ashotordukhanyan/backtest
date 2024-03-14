@@ -96,6 +96,11 @@ def get_broad_etfs() -> List[str]:
 def get_composition(etf_ticker:str, asof:date)-> pd.DataFrame:
     '''Get composition for a given ETF from ishares as of(must be a month end)'''
     #HACK - IWB comp are missing for 6 months and IWV missing from 2016-08-01 to 2017-01-01
+    RUSSELL_START_DATE = date(2007, 1, 31) # we only have history from this date on
+    if asof < RUSSELL_START_DATE and etf_ticker in ['IWB','IWV', 'IWM','IVV']:
+        logging.warning(f'No data for {etf_ticker} before {RUSSELL_START_DATE.strftime("%m/%d/%y")} - falling back on earliest available')
+        return get_composition(etf_ticker, RUSSELL_START_DATE)
+
     if etf_ticker == 'IWB' and asof.year == 2017 and asof<date(2017,7,31):
         asof = date(2016,12,30)
     if etf_ticker == 'IWV' and asof >= date(2017,1,31) and asof<=date(2017,6,30):

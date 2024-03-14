@@ -14,7 +14,7 @@ class CT(Enum):
     I8 = 'int8','int', qtemporal.QINT_LIST
     STR = 'string','', qtemporal.QSTRING_LIST
     SYMBOL = 'string','sym', qtemporal.QSYMBOL_LIST
-    LONG = 'int32','long', qtemporal.QLONG_LIST
+    LONG = 'Int32','long', qtemporal.QLONG_LIST
 
     def __init__(self, pandatype:str, kdbtype:str, qtemporalType:qtemporal = None):
         self.pandatype_ = pandatype
@@ -158,7 +158,11 @@ class DataGrid:
         ''' Cast the dataframe to python types to avoid qpython serialization bug'''
         df = df.copy()
         for c in self.columns_:
-            if c.type in [CT.I64,CT.I8, CT.LONG, CT.SYMBOL]:
-                if c.name in df.columns:
+            if c.name in df.columns:
+                if c.type in [CT.I64,CT.I8, CT.LONG, CT.SYMBOL]:
                     df[c.name] = df[c.name].astype(c.type.pandatype)
+                elif c.type == CT.DATE:
+                    df[c.name] = df[c.name].dt.date
+                elif c.type == CT.DATETIME:
+                    df[c.name] = df[c.name].dt.to_pydatetime()
         return df

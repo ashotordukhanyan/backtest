@@ -3,10 +3,8 @@ from market_data.market_data import get_all_syms,get_md_conn,_kdbdt
 import logging
 from utils.datagrid import CT, ColumnDef, DataGrid
 import numpy as np
-from datetime import date,timedelta
-from utils.utils import get_all_trading_month_ends
 from quant.symstat_params import SYMSTAT_PARAMS as PARAMS
-
+from datetime import date,timedelta
 def calculate_rolling_betas(mrets: pd.DataFrame ):
     '''
         Given a frame of monthly returns, calculate rolling betas to SPY,
@@ -48,7 +46,7 @@ class SymReturns(DataGrid):
         ColumnDef('sym',CT.SYMBOL, isKey=True),
         ColumnDef('date', CT.DATE, isKey=True),
         ColumnDef('beta', CT.F32),  # market beta - same as in sym_stats, here for convienience
-        ColumnDef('etf', CT.F32),  # most correlated etf - same as in sym_stats, here for convienience
+        ColumnDef('etf', CT.SYMBOL),  # most correlated etf - same as in sym_stats, here for convienience
         ColumnDef('etf_beta', CT.F32),  # most correlated etf's beta - same as in sym_stats, here for convienience
         ColumnDef('c2c', CT.F32), # close to close return from prev close to this date's close
         ColumnDef('o2c', CT.F32), # open to close return from this date's open to this date's close
@@ -104,7 +102,7 @@ class SymReturns(DataGrid):
             {
             [syms;sd;ed]                     
             .md:select sym,date,adjusted_close,open,close from eodhd_price where year within (`year$sd;`year$ed), date>=sd,date<=ed,sym in `$syms,volume>0;
-            //adding 1 to date below because stats as of T only bceome available R+1
+            //adding 1 to date below because stats as of T only become available R+1
             .symstats:select sym,date+1,beta,etf,etf_beta from sym_stats where year within (`year$sd-1;`year$ed),sym in `$syms;
             aj[`sym`date;.md;.symstats]
             }
@@ -119,10 +117,10 @@ class SymReturns(DataGrid):
 
             ##Add columns for most correlated etf beta and etf returns
             md = md.merge(md[['sym', 'date', 'c2c', 'o2c']], left_on=['etf', 'date'], right_on=['sym', 'date'],
-                              suffixes=(None, '_etf')).drop(columns=['sym_etf'])
+                              suffixes=(None, '_etf'),how='left').drop(columns=['sym_etf'])
             ##Add columns for market returns
             MARKET = 'SPY'
-            md = md.merge(md.loc[md.sym==MARKET,['date', 'c2c', 'o2c']],on='date',suffixes=('', '_market'))
+            md = md.merge(md.loc[md.sym==MARKET,['date', 'c2c', 'o2c']],on='date',suffixes=('', '_market'),how='left')
 
             ##Add columns for dollar neutral returns
             md['c2cdn'] = md.c2c - md.c2c_market
@@ -138,10 +136,52 @@ class SymReturns(DataGrid):
             all_returns.append(md)
 
         all_returns = pd.concat(all_returns)
-        return all_returns
+        return all_returns[(all_returns.date.dt.year >= startYr) & (all_returns.date.dt.year <= endYr)]
 
+    def getReturns(self,startDate=None,endDate=None,syms=None,columns=[]) ->pd.DataFrame:
+        if startDate is None and endDate is None and syms is None:
+            raise Exception("Must specify a where condition")
+        startDate,endDate = startDate or date.min,endDate or date.max
+        whereClause = f'where year >= `year$sd, year <=`year$ed,date>=sd,date<=ed'
+        if syms is not None:
+            whereClause += ',sym in `$syms'
+        query = f'''
+            {{[syms;sd;ed]
+                (select {self.getColumnsWithCasts(columns)} from {self.name_} {whereClause})
+                lj 2! select date,sym,adjusted_close,close from eodhd_price {whereClause}
+            }}
+        '''
+        with get_md_conn() as q:
+            data =  self._sendSync(q,query,syms or ['ALL'], _kdbdt(startDate),_kdbdt(endDate))
+            return self.castToPython(data)
+
+    def enrichWithReturns(self, trades, columns=[]) ->pd.DataFrame:
+        ''' Enrich trades with returns
+            :param trades: trades dataframe wich sym and date columns
+        '''
+        assert 'date' in trades.columns
+        assert 'sym' in trades.columns
+        temp = trades[['date','sym']].copy()
+        temp['date']=temp.date.apply(_kdbdt)
+        temp.meta = self.getqpythonMetaData()
+        qcode = f'''
+        {{
+        [trades]
+        trades: select sym,`date$date from trades;
+        .temp:select {self.getColumnsWithCasts(columns)} from {self.name_} where sym in (exec sym from trades), date in (exec date from trades);
+        trades lj 2!.temp
+        }}
+        '''
+        with get_md_conn() as q:
+            data = self._sendSync(q, qcode, temp)
+        data = self.castToPython(data)
+        return pd.merge(trades, data, on=['sym', 'date'], how='left')
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG,format='%(asctime)s %(levelname)s %(message)s')
     b = SymReturns()
-    b.calcAndStoreSymReturns(2000,2023)
+    #b.calcAndStoreSymReturns(2000,2023)
+    #d = b.getReturns(date(2003, 1, 1),date(2004, 1, 1), syms=['GS', 'IBM'])
+    trades = pd.DataFrame({'sym': ["IBM", "GS"], 'date': [date(2022, 7, 13), date(2022, 8, 13)]})
+    data = b.enrichWithReturns(trades, [] )
+    print(data)

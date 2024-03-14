@@ -72,6 +72,7 @@ class AlexandriaNewsDailySummary(DataGrid):
 
     _SCHEMA = [
         ColumnDef('date',CT.DATE,isKey=True),
+        ColumnDef('TimePeriod',CT.SYMBOL,isKey=True),
         ColumnDef('Ticker',CT.SYMBOL, isKey=True),
         ColumnDef('Mentions', CT.LONG),
         ColumnDef('Sentiment', CT.F32),
@@ -85,7 +86,7 @@ class AlexandriaNewsDailySummary(DataGrid):
         ColumnDef('asof_date', CT.DATE, transformer=lambda frame: [np.datetime64(datetime.date.today())]*len(frame)),
     ]
     def __init__(self):
-        super().__init__('alnews_daily',self._SCHEMA)
+        super().__init__('alnews_daily_summary',self._SCHEMA)
 
     def load_news_summary(self, qc: qconnection, KDB_ROOT, years : List[int]):
         '''
@@ -98,11 +99,19 @@ class AlexandriaNewsDailySummary(DataGrid):
         self.kdbInitConnection(qc)
         for year in years:
             qcode = f'''
-            .t:update Confidence: ((Prob_POS|Prob_NTR|Prob_NEG) -(1%3)) % (2%3) from 
-            select Mentions:`float$count i, avg Sentiment, avg Relevance, avg MarketImpactScore, avg Prob_POS, avg Prob_NTR, avg Prob_NEG by Timestamp.date,Ticker from alnews where year = {year}, Ticker <> `;
+            {{[yr]            .t:update Confidence: ((Prob_POS|Prob_NTR|Prob_NEG) -(1%3)) % (2%3) from 
+            select Mentions:`float$count i, avg Sentiment, avg Relevance, avg MarketImpactScore, avg Prob_POS, avg Prob_NTR, avg Prob_NEG 
+            by LocalTimestamp.date,TimePeriod, Ticker 
+            from 
+            update LocalTimestamp: ltime Timestamp,
+            TimePeriod:?[((`minute$ltime Timestamp)<09:30);`PREOPEN;?[((`minute$ltime Timestamp)<15:30);`CONTINUOUS;?[((`minute$ltime Timestamp)<16:00);`EOD;`POSTCLOSE]]]
+            from 
+            select from alnews where year = yr,(`year$(ltime Timestamp))=yr, Ticker <> `;
             0!.t
+            }}
             '''
-            data = self._sendSync(qc, qcode)
+
+            data = self._sendSync(qc, qcode,year)
             data['date'] = data.date.astype('datetime64[ns]')  ##qpythin serliazation bug - cant handle np.datetime64[s]
             data['year'] = [year] * len(data)
             data['asof_date'] = [np.datetime64(datetime.date.today())] * len(data)
@@ -114,7 +123,7 @@ class AlexandriaNewsDailySummary(DataGrid):
             self.saveKdbTableToDisk(qc, year, KDB_ROOT)
 
 
-    def get_all_sentiments(self,start_date: datetime.date, end_date: datetime.date, qc: qconnection) -> pd.DataFrame:
+    def get_all_sentiments(self,start_date: datetime.date, end_date: datetime.date, qc: qconnection, columns = []) -> pd.DataFrame:
         '''
             Get all news sentiment for a given date range
         :param start_date: start date
@@ -123,7 +132,34 @@ class AlexandriaNewsDailySummary(DataGrid):
         :return: pandas dataframe
         '''
         qcode = f'''
-            {{[sd;ed] select {self.getColumnsWithCasts()} from {self.name_} where date within (sd;ed)}}
+            {{[sd;ed] select {self.getColumnsWithCasts(columns)} from {self.name_} where date within (sd;ed)}}
             '''
         data = self._sendSync(qc, qcode, np.datetime64(start_date), np.datetime64(end_date))
+        return self.castToPython(data)
+
+    def get_sentiments_by_effective_date(self,start_date: datetime.date, end_date: datetime.date, qc: qconnection,
+                                         sameDayPhases = ["PREOPEN","CONTINUOUS"], checkSentiment=True ) -> pd.DataFrame:
+        '''
+            Get a snapshot of news sentiment by date/ticker
+        :param start_date: start date
+        :param end_date: end date
+        :param qc: qconnection
+        :param sameDayPhases: list of day phases to include into same day ( e.g. PREOPEN, CONTINUOUS then POSTCLOSE moves to different day)
+
+        :return: pandas dataframe
+        '''
+        checkSentimentQ = ',Sentiment <> 0' if checkSentiment else ''
+        qcode = f'''
+        {{
+        [phases;sd;ed]
+        0!update Confidence: ((Prob_POS|Prob_NTR|Prob_NEG) -(1%3)) % (2%3) from 
+        select `float$(sum Mentions), Mentions wavg Sentiment,Mentions wavg Relevance,Mentions wavg MarketImpactScore,
+        Mentions wavg Prob_POS,Mentions wavg Prob_NTR,Mentions wavg Prob_NEG
+        by EffectiveDate,Ticker from
+        update EffectiveDate:?[TimePeriod in `$phases;date;date+1] from
+        select from alnews_daily_summary where date >=sd, date <= ed, Ticker <> ` {checkSentimentQ}
+        }}
+        '''
+
+        data = self._sendSync(qc, qcode, sameDayPhases, np.datetime64(start_date), np.datetime64(end_date))
         return self.castToPython(data)

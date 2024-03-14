@@ -3,7 +3,7 @@ import datetime
 from utils.qpthack import qconnection, qtemporal, MetaData
 import pandas as pd
 from market_data.alexandria.alexandria import AlexandriaNewsDailySummary
-from market_data.market_data import  get_adj_closes, get_daily_stats
+from market_data.market_data import  get_adj_closes, get_daily_stats,get_md_conn
 from symbology.compositions import get_composition
 from utils.utils import get_trading_month_ends,get_trading_days,get_last_trading_month_end,get_previous_trading_day
 import logging
@@ -30,21 +30,24 @@ def get_ls_daily_rets(PERIOD_START:datetime.date,PERIOD_END:datetime.date):
     ''' Returns of a simple strategy where we go long/short sentiment dollar neutral '''
     ands = AlexandriaNewsDailySummary()
 
-    with qconnection.QConnection(host='localhost', port=12345, pandas=True) as q:
-        sentiments = ands.get_all_sentiments(PERIOD_START,PERIOD_END,q)
-        tickers = sorted(sentiments.Ticker.unique().tolist())
-    sentiment_cols = ['date', 'Ticker', 'Mentions', 'Sentiment', 'Confidence', 'Relevance','MarketImpactScore', 'Prob_POS', 'Prob_NTR', 'Prob_NEG']
-    #sentiment_cols except date and Ticker
+    cols = ['date', 'TimePeriod', 'Ticker', 'Mentions', 'Sentiment', 'Confidence', 'Relevance',
+                      'MarketImpactScore', 'Prob_POS', 'Prob_NTR', 'Prob_NEG']
+    with get_md_conn() as q:
+        sentiments = ands.get_sentiments_by_effective_date(PERIOD_START, PERIOD_END, q)
 
-    sentiments = sentiments[sentiment_cols]
+    tickers = sorted(sentiments.Ticker.unique().tolist())
     #enrich with market data
-    market_data = getCleanData(PERIOD_START,PERIOD_END,tickers,benchmark='SPY',remove_outliers=True)
+    from quant.symreturns import SymReturns
+    returns = SymReturns().getReturns(PERIOD_START,PERIOD_END,tickers)
+
+    #market_data = getCleanData(PERIOD_START,PERIOD_END,tickers,benchmark='SPY',remove_outliers=True)
     #tempporary until all kdb data conversions are done through datagrid
-    market_data['sym'] = market_data.sym.astype('string')
+    #market_data['sym'] = market_data.sym.astype('string')
 
 
-    merged = pd.merge_asof(market_data.sort_values('date'),sentiments,left_by = 'sym', right_by='Ticker',on='date',
+    merged = pd.merge_asof(returns.sort_values('date'),sentiments,left_by = 'sym', right_by='Ticker',left_on='date',right_on='EffectiveDate',
                            direction='backward', allow_exact_matches=False,tolerance=pd.Timedelta('3 days'))
+    merged = merged[~merged.Sentiment.isna()]
     merged = merged.fillna({x:0 for x in sentiments.columns[2:]}).drop(columns=['Ticker'])
     gb = merged.groupby('date')
     #get group keys from gb
