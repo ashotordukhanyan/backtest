@@ -158,8 +158,13 @@ class SymStats(DataGrid):
         {{
         [trades]
         trades: select sym,`date$date from trades;
-        .temp:select {self.getColumnsWithCasts(columns)} from {self.name_} where sym in (exec sym from trades);
-        aj[`sym`date;trades;.temp]
+        //0N!(.z.T,`$"SELECTING INTO TEMP");
+        .temp:2!select {self.getColumnsWithCasts(columns)} from {self.name_} where 
+        sym in (exec sym from trades), date<= (exec max date from trades), date >= ((exec min date from trades) - 60);
+        //0N!(.z.T,`$"DONE SELECTING INTO TEMP. DOING AJ");
+        .res:aj[`sym`date;trades;update `g#sym from .temp];
+        //0N!(.z.T,`$"DONE");
+        .res
         }}
         '''
         with get_md_conn() as q:

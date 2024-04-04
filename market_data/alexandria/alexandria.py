@@ -1,7 +1,10 @@
+from utils.qpthack import qconnection,qtemporal
+
 import numpy as np
 import datetime
+
+from market_data.market_data import _kdbdt, get_md_conn
 from utils.datagrid import CT, ColumnDef, DataGrid
-from utils.qpthack import qconnection
 import logging
 from typing import List
 import pandas as pd
@@ -72,7 +75,7 @@ class AlexandriaNewsDailySummary(DataGrid):
 
     _SCHEMA = [
         ColumnDef('date',CT.DATE,isKey=True),
-        ColumnDef('TimePeriod',CT.SYMBOL,isKey=True),
+        ColumnDef('TimePeriod',CT.SYMBOL,isKey=True), ##PREOPEN|CONTINUOUS|EOD|POSTCLOSE
         ColumnDef('Ticker',CT.SYMBOL, isKey=True),
         ColumnDef('Mentions', CT.LONG),
         ColumnDef('Sentiment', CT.F32),
@@ -88,7 +91,7 @@ class AlexandriaNewsDailySummary(DataGrid):
     def __init__(self):
         super().__init__('alnews_daily_summary',self._SCHEMA)
 
-    def load_news_summary(self, qc: qconnection, KDB_ROOT, years : List[int]):
+    def load_news_summary(self, qc: qconnection, KDB_ROOT, years : List[int],RELEVANCE_CUTOFF = .5, CONFIDENCE_CUTOFF = .333):
         '''
             Load news summary (by date/ticker) to kdb
         :param qc: qconnection
@@ -97,6 +100,8 @@ class AlexandriaNewsDailySummary(DataGrid):
         :return:
         '''
         self.kdbInitConnection(qc)
+        relClause = f',Relevance >= {RELEVANCE_CUTOFF}' if RELEVANCE_CUTOFF is not None else ''
+        confClause = f',Confidence >= {CONFIDENCE_CUTOFF}' if CONFIDENCE_CUTOFF is not None else ''
         for year in years:
             qcode = f'''
             {{[yr]            .t:update Confidence: ((Prob_POS|Prob_NTR|Prob_NEG) -(1%3)) % (2%3) from 
@@ -106,7 +111,7 @@ class AlexandriaNewsDailySummary(DataGrid):
             update LocalTimestamp: ltime Timestamp,
             TimePeriod:?[((`minute$ltime Timestamp)<09:30);`PREOPEN;?[((`minute$ltime Timestamp)<15:30);`CONTINUOUS;?[((`minute$ltime Timestamp)<16:00);`EOD;`POSTCLOSE]]]
             from 
-            select from alnews where year = yr,(`year$(ltime Timestamp))=yr, Ticker <> `;
+            select from alnews where year = yr,(`year$(ltime Timestamp))=yr, Ticker <> ` {relClause} {confClause} ;
             0!.t
             }}
             '''
@@ -148,6 +153,9 @@ class AlexandriaNewsDailySummary(DataGrid):
 
         :return: pandas dataframe
         '''
+        if sameDayPhases is None or sameDayPhases == 'ALL' or sameDayPhases == ['ALL'] or sameDayPhases == []:
+            sameDayPhases = ['PREOPEN','CONTINUOUS','EOD','POSTCLOSE']
+
         checkSentimentQ = ',Sentiment <> 0' if checkSentiment else ''
         qcode = f'''
         {{
@@ -162,4 +170,44 @@ class AlexandriaNewsDailySummary(DataGrid):
         '''
 
         data = self._sendSync(qc, qcode, sameDayPhases, np.datetime64(start_date), np.datetime64(end_date))
-        return self.castToPython(data)
+        data = self.castToPython(data)
+        data['EffectiveDate'] = data.EffectiveDate.dt.date
+        return data
+
+    def enrichWithNewsDailySummary(self, trades, sameDayPhases = ["PREOPEN","CONTINUOUS"], checkSentiment=True) ->pd.DataFrame:
+        ''' Enrich trades with daily sentiment summary (typically from previous day)
+            :param trades: trades dataframe wich sym and date columns
+        '''
+        assert 'date' in trades.columns
+        assert 'sym' in trades.columns
+        temp = trades[['date','sym']].copy()
+        temp['EffectiveDate'] = temp.date.apply(lambda x: _kdbdt(x - datetime.timedelta(days=1)))
+        temp['date']=temp.date.apply(_kdbdt)
+
+        if sameDayPhases is None or sameDayPhases == 'ALL' or sameDayPhases == ['ALL'] or sameDayPhases == []:
+            sameDayPhases = ['PREOPEN','CONTINUOUS','EOD','POSTCLOSE']
+
+        temp.meta = self.getqpythonMetaData()
+        temp.meta['EffectiveDate'] = qtemporal.QDATE_LIST
+        temp.meta['sym'] = qtemporal.QSYMBOL_LIST
+        checkSentimentQ = ',Sentiment <> 0' if checkSentiment else ''
+        qcode = f'''
+        {{
+        [trades;phases]
+        .news:0!update Confidence: ((Prob_POS|Prob_NTR|Prob_NEG) -(1%3)) % (2%3),sym:Ticker from 
+        select `float$(sum Mentions), Mentions wavg Sentiment,Mentions wavg Relevance,Mentions wavg MarketImpactScore,
+        Mentions wavg Prob_POS,Mentions wavg Prob_NTR,Mentions wavg Prob_NEG
+        by EffectiveDate,Ticker from
+        update EffectiveDate:?[TimePeriod in `$phases;date;date+1] from
+        select from alnews_daily_summary where date>= (exec min date from trades)-1, date <= ( exec max date from trades), 
+            Ticker in (exec sym from trades) {checkSentimentQ};
+        0!(trades lj `sym`EffectiveDate xkey .news)
+        }}
+        '''
+
+        with get_md_conn() as q:
+            data = self._sendSync(q, qcode, temp,sameDayPhases)
+        data = self.castToPython(data)
+        data['sym'] = data['sym'].astype('string')
+        data['EffectiveDate'] = data['EffectiveDate'].dt.date
+        return pd.merge(trades, data, on=['sym', 'date'], how='left')

@@ -70,6 +70,9 @@ def get_composition_history(etf_ticker:str, start_date:date, end_date:date, cale
     data = []
     for m in month_ends:
         datum = get_composition(etf_ticker,m)
+        if datum is not None and not datum.empty:
+            datum['real_asof_date'] = datum['asof_date']
+            datum['asof_date'] = m
         data.append(datum)
     result = pd.concat(data)
     if equity_only:

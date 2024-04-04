@@ -148,7 +148,7 @@ class SymReturns(DataGrid):
         query = f'''
             {{[syms;sd;ed]
                 (select {self.getColumnsWithCasts(columns)} from {self.name_} {whereClause})
-                lj 2! select date,sym,adjusted_close,close from eodhd_price {whereClause}
+                lj 2! select date,sym,adjusted_close,close,`float$volume from eodhd_price {whereClause}
             }}
         '''
         with get_md_conn() as q:

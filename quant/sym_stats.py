@@ -8,8 +8,10 @@ from tqdm import tqdm
 from typing import List
 from utils.utils import get_previous_trading_day
 from market_data.market_data import _kdbdt
+#@DeprecationWarning('Use symstats.py instead')
 
 MDROOT="c:/KDB_MARKET_DATA2/"
+@DeprecationWarning('Use symstats.py instead')
 def get_md(syms:List[str],SD:date,ED:date)->pd.DataFrame:
     with get_md_conn() as q:
         md = q.sendSync(
@@ -25,9 +27,10 @@ def get_md(syms:List[str],SD:date,ED:date)->pd.DataFrame:
         md['log_return'] = np.where((md['a_return']<=-1.)|(md['a_return'].isna()),np.nan,np.log(1. + md['a_return']))
     return md
 
+@DeprecationWarning('Use symstats.py instead')
 def std_wo_outliers(x):
     return x[(x>x.quantile(0.05)) & (x<x.quantile(0.95))].std()
-
+@DeprecationWarning('Use symstats.py instead')
 def _sendSync(qcode,*parameters):
     logging.info(f'EXECUTING {qcode}')
     with qconnection.QConnection(host='localhost',port=12345,pandas=True) as q:
@@ -37,6 +40,7 @@ _STATS_META = MetaData(asof_date=qtemporal.QDATE,date=qtemporal.QDATE, sym=qtemp
 for f in 'lr_vol ar_vol ADV ADVD ar_beta'.split():
     _STATS_META[f]=qtemporal.QFLOAT
 
+@DeprecationWarning('Use symstats.py instead')
 def initQ(year: int):
     QCODE = f'''
         $[ not `daily_statsREMOVEME in key `.;
@@ -51,6 +55,7 @@ def initQ(year: int):
     #   q.sendSync(QCODE)
     _sendSync(QCODE)
 
+@DeprecationWarning('Use symstats.py instead')
 def calc_and_store_yearly_stats(year:int):
     logging.info(f'{year} Initialising Q')
     initQ(year)
@@ -66,6 +71,7 @@ def calc_and_store_yearly_stats(year:int):
         logging.info(f'{year} Persisting to disk')
         persistToDisk(year)
 
+@DeprecationWarning('Use symstats.py instead')
 def persistToDisk(year:int):
     QCODE = f' MDROOT:"{MDROOT}";'
     QCODE = QCODE + \
@@ -75,6 +81,7 @@ def persistToDisk(year:int):
     '''
     _sendSync(QCODE)
 
+@DeprecationWarning('Use symstats.py instead')
 def calc_yearly_stats(year:int):
     ##Get a list of all symbols from kdb
     universe = sorted(get_all_syms(date(year,1,1),date(year,12,31)))
@@ -112,7 +119,7 @@ def calc_yearly_stats(year:int):
     md['year'] = md.date.dt.year
     return md[md.year==year]
 
-if __name__ == '__main__':
-    logging.basicConfig(filename=None,level=logging.INFO,format='%(levelname)s %(asctime)s %(message)s',datefmt='%H:%M:%S')
-    for year in tqdm(range(2020,2024)):
-        calc_and_store_yearly_stats(year)
+# if __name__ == '__main__':
+#     logging.basicConfig(filename=None,level=logging.INFO,format='%(levelname)s %(asctime)s %(message)s',datefmt='%H:%M:%S')
+#     for year in tqdm(range(2020,2024)):
+#         calc_and_store_yearly_stats(year)

@@ -9,7 +9,7 @@ import functools
 from statsmodels.tsa.arima.model import ARIMA
 from typing import Dict,List
 from dateutil.relativedelta import relativedelta
-from multiprocessing import freeze_support
+from multiprocessing import freeze_support,Pool
 from market_data.market_data import _kdbdt,get_md_conn
 from utils.datagrid import CT, ColumnDef
 import warnings
@@ -36,10 +36,19 @@ class ARIMASignal(TradingSignal):
         ColumnDef('year', CT.LONG, transformer = lambda frame: frame.date.dt.year, isPartition=True),
     ]
     def __init__(self):
-        super().__init__('arima_signal2', self._SCHEMA)
+        super().__init__('arima_signal', self._SCHEMA)
+
+    def retrieveSignal(self, startDate: date, endDate: date, target='c2cbn', syms: List[str] = None,
+                       columns: List[str] = [],
+                       additionalWhereClause: str = None):
+        ''' Retrieve ARIMA signal for given period '''
+        whereClause = f"target = `{target}" + (f",{additionalWhereClause}" if additionalWhereClause is not None else '')
+        return super().retrieveSignal(startDate, endDate, syms, columns, whereClause)
+
 class ARIMATrader(Trader):
     ''' Auto-correlation based strategy '''
-    def __init__(self,params : ARIMATraderParams = DEFAULT_ARIMA_PARAMS):
+    def __init__(self, params: ARIMATraderParams = DEFAULT_ARIMA_PARAMS):
+        super().__init__(params)
         self.params_ = params
 
     def _get_acf_result_unpacker(self, acf_or_pacf='acf', qstat: bool = True):
@@ -138,27 +147,29 @@ class ARIMATrader(Trader):
         for index,td in enumerate(test_trading_days):
             if index % 5 == 0:
                 logging.info(f'Simulating {index}/{len(test_trading_days)} for {td}')
-            panda_ts = _kdbdt(td)
             for sym in syms:
                 forecast = models[sym].get_forecast(1)
                 prediction = forecast.predicted_mean[0]
                 se = forecast.se_mean[0] #standard error
-                returns.loc[(returns.sym == sym) & (returns.date == panda_ts), predCol] = prediction
-                returns.loc[(returns.sym == sym) & (returns.date == panda_ts), 'predicted_se'] = se
-                returns.loc[(returns.sym == sym) & (returns.date == panda_ts), 'model_order'] = str(models[sym].model.order)
-                returns.loc[(returns.sym == sym) & (returns.date == panda_ts), 'modelP'] = models[sym].model.order[0]
-                returns.loc[(returns.sym == sym) & (returns.date == panda_ts), 'modelQ'] = models[sym].model.order[-1]
-                actual = returns.loc[(returns.sym == sym) & (returns.date == panda_ts), self.params_.target].to_list()
+                mask = (returns.sym == sym) & (returns.date == td)
+                model_order = models[sym].model.order
+                returns.loc[mask,[predCol,'predicted_se','model_order','modelP','modelQ']] = \
+                    [prediction,se,str(model_order),model_order[0],model_order[-1]]
+                actual = returns.loc[mask, self.params_.target].to_list()
                 if len(actual) != 1:
                     raise Exception(f'{startDate} Expected 1 row got {len(actual)} for {sym} {td}')
                 models[sym] = models[sym].append(actual)
 
         return returns
 
+def simWrapper(params):
+    logging.basicConfig(filename=None, level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
+    return simulate(*params)
 @cached_df
 def simulate(TRAIN_PERIOD_START,TRAIN_PERIOD_END,TEST_PERIOD_START,TEST_PERIOD_END, codever=0) -> pd.DataFrame:
-    logging.info(
-        f'{index}/{len(SIM_DATES)} TRAINING {TRAIN_PERIOD_START} - {TRAIN_PERIOD_END} TESTING {TEST_PERIOD_START} - {TEST_PERIOD_END}')
+    logging.warning(
+        f'TRAINING {TRAIN_PERIOD_START} - {TRAIN_PERIOD_END} TESTING {TEST_PERIOD_START} - {TEST_PERIOD_END}')
+    trader = ARIMATrader()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         models = trader.calibrateModels(TRAIN_PERIOD_START, TRAIN_PERIOD_END)
@@ -172,7 +183,7 @@ def simulate(TRAIN_PERIOD_START,TRAIN_PERIOD_END,TEST_PERIOD_START,TEST_PERIOD_E
 
 if __name__ == '__main__':
     logging.basicConfig(filename=None, level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', datefmt='%H:%M:%S')
-    DRY_RUN = True
+    DRY_RUN = False
     freeze_support()
     params = DEFAULT_ARIMA_PARAMS
     SIM_DATES = []
@@ -189,29 +200,37 @@ if __name__ == '__main__':
     if not DRY_RUN:
         with get_md_conn() as q:
             signal.kdbInitConnection(q)
-    for index,SIM_DATE in enumerate(SIM_DATES):
-        TRAIN_PERIOD_START = SIM_DATE - params.trainPeriod
-        TRAIN_PERIOD_END = SIM_DATE - relativedelta(days=1)
-        TEST_PERIOD_START = SIM_DATE
-        TEST_PERIOD_END = SIM_DATE + params.trainFrequency# - relativedelta(days=1)
+    PARRALLEL = 1
+    if DRY_RUN and PARRALLEL > 1:
+        logging.warning('DRY_RUN is set to True - parallel processing will be used to cache data')
+        fparams = [[SIM_DATE-params.trainPeriod, SIM_DATE-relativedelta(days=1), SIM_DATE, SIM_DATE+params.trainFrequency,2] for SIM_DATE in SIM_DATES]
+        with Pool(PARRALLEL) as p:
+            allSimResults = p.map(simWrapper, fparams)
+    else:
+        for index,SIM_DATE in enumerate(SIM_DATES):
+            TRAIN_PERIOD_START = SIM_DATE - params.trainPeriod
+            TRAIN_PERIOD_END = SIM_DATE - relativedelta(days=1)
+            TEST_PERIOD_START = SIM_DATE
+            TEST_PERIOD_END = SIM_DATE + params.trainFrequency# - relativedelta(days=1)
 
-        simResults = simulate(TRAIN_PERIOD_START, TRAIN_PERIOD_END, TEST_PERIOD_START, TEST_PERIOD_END,2)
-        years = sorted(list(simResults.year.unique()))
+            simResults = simulate(TRAIN_PERIOD_START, TRAIN_PERIOD_END, TEST_PERIOD_START, TEST_PERIOD_END,2)
+            simResults['date'] = simResults.date.apply(_kdbdt) ##SORT THIS OUT!!!
+            years = sorted(list(simResults.year.unique()))
 
-        if not DRY_RUN:
-            with get_md_conn() as q:
-                for year in years:
-                    if year > currentProcessedYear:
-                        if currentProcessedYear > 0:
-                            logging.info(f'Saving data to disk for year {currentProcessedYear}')
-                            signal.saveKdbTableToDisk(q, currentProcessedYear, KDB_ROOT)
-                        currentProcessedYear = year
-                        logging.info(f'Initializing partition table for year {year}')
-                        signal.kdbInitPartitionTable(year,q)
+            if not DRY_RUN:
+                with get_md_conn() as q:
+                    for year in years:
+                        if year > currentProcessedYear:
+                            if currentProcessedYear > 0:
+                                logging.info(f'Saving data to disk for year {currentProcessedYear}')
+                                signal.saveKdbTableToDisk(q, currentProcessedYear, KDB_ROOT)
+                            currentProcessedYear = year
+                            logging.info(f'Initializing partition table for year {year}')
+                            signal.kdbInitPartitionTable(year,q)
 
-                    data = simResults[simResults.year == year].copy()
-                    data.meta = signal.getqpythonMetaData()
-                    signal.upsertToKDB(q,KDB_ROOT,data)
+                        data = simResults[simResults.year == year].copy()
+                        data.meta = signal.getqpythonMetaData()
+                        signal.upsertToKDB(q,KDB_ROOT,data)
 
-                if currentProcessedYear > 0:
-                    signal.saveKdbTableToDisk(q,year,KDB_ROOT)
+                    if currentProcessedYear > 0:
+                        signal.saveKdbTableToDisk(q,year,KDB_ROOT)

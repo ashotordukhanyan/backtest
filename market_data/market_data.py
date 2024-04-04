@@ -4,12 +4,13 @@ from symbology.compositions import get_composition_history
 from utils.utils import cached_df
 from typing import List,Optional
 from datetime import date
-import yfinance as yf
 import logging
 import pandas as pd
 from functools import lru_cache
 from utils.qpthack import QConnection
+import yfinance as yf
 
+##@DeprecationWarning('THIS WHOLE FILE IS DEPRECATED')
 @cached_df
 def _get_daily_market_data_stripe(stripe:str, start_date:date, end_date:date,_tickers: List[str]):
     logging.info(f"Retrieving market data for {len(_tickers)} symbols for stripe {stripe}")

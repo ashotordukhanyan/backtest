@@ -14,7 +14,7 @@ def _string_key(arg) -> str :
         return arg.strftime('%Y%m%d')
     if isinstance(arg,(int,float)):
         return str(arg)
-    if isinstance(arg, list):
+    if isinstance(arg, (list,tuple)):
         return _KEY_DELIMETER.join([str(x) for x in arg])
     else:
         raise Exception(f'Unknown type {type(arg)}')
@@ -101,6 +101,19 @@ def get_next_trading_day(adate:date,exchange_code:str='NYSE')->date:
         raise Exception(f"Unrecognized echange code {exchange_code}")
     trading_days = mcal.get_calendar(exchange_code).valid_days(adate,adate+datetime.timedelta(days=7))
     return trading_days.date[0] if trading_days is not None else None
+def get_next_trading_days(dates:List[date], exchange_code:str='NYSE')->date:
+    '''Next trading days for many days for a given exchange '''
+    if exchange_code not in mcal.get_calendar_names():
+        raise Exception(f"Unrecognized echange code {exchange_code}")
+    trading_days = mcal.get_calendar(exchange_code).valid_days(min(dates),max(dates)+datetime.timedelta(days=7)).date
+    #for each date in dates get first trading_day that is >= date
+    trading_day_index=0
+    mapping = {} #date to next trading day mapping
+    for d in sorted(dates):
+        while(trading_days[trading_day_index] <= d):
+            trading_day_index+=1
+        mapping[d]=trading_days[trading_day_index]
+    return [mapping[d] for d in dates]
 
 @functools.lru_cache(50)
 def get_previous_trading_day(adate:date,days_back:int=1, exchange_code:str='NYSE'):

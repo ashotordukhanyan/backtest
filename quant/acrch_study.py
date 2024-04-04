@@ -282,7 +282,7 @@ if __name__ == '__main__':
         TRADE_DATES.append(TRADE_DATE)
         TRADE_DATE  = TRADE_DATE + TIME_STEP
     allSimResults = []
-    PARRALEL = 8
+    PARRALEL = 1
     ALPHA = .05
     NLAGS = 5
     if PARRALEL>1:
@@ -292,9 +292,9 @@ if __name__ == '__main__':
             #allSimResults = p.map(simulate, TRADE_DATES)
     else:
         for TRADE_DATE in TRADE_DATES:
-            simResults = simulateTradeDate(TRADE_DATE, ALPHA, NLAGS,universe='IWV',codever=20240108)
+            simResults = simulateTradeDate(TRADE_DATE, ALPHA, NLAGS,universe='IWV',codever=20240108+1)
             TRADE_DATE  = TRADE_DATE + TIME_STEP
             allSimResults.append(simResults)
 
-    allSimResults = pd.concat(allSimResults)
-    allSimResults.to_csv('c:/temp/SIM_RESULTS_01_08.csv',mode="w+")
+    #allSimResults = pd.concat(allSimResults)
+    #allSimResults.to_csv('c:/temp/SIM_RESULTS_01_08.csv',mode="w+")

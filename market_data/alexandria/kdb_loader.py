@@ -18,4 +18,4 @@ if __name__ == '__main__':
         if LOAD_NEWS_DAILY_SUMMARY:
             logging.info('Loading news daily summary to KDB')
             ANDS = AlexandriaNewsDailySummary()
-            ANDS.load_news_summary(q, KDB_ROOT,range(2000,2024))
+            ANDS.load_news_summary(q, KDB_ROOT,list(range(2000,2024)))

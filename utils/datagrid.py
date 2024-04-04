@@ -91,7 +91,7 @@ class DataGrid:
         ''' Initialize the provided connection by creating the table if it does not alread exist'''
         nl = '\n'
         def ti(c) :
-            return f'`{c.type.kdbtype}$()' if len(c.type.kdbtype) > 0 else "()"
+            return '`$()' if c.type == CT.SYMBOL else f'`{c.type.kdbtype}$()' if len(c.type.kdbtype) > 0 else "()"
         keyColDef = ';'.join([f' {c.name} : {ti(c)}' for c in self.getKeyColumns()])
         nonKeyColDef = ';'.join([f' {c.name} : {ti(c)} ' for c in self.columns_ if not c.isKey])
         tableInitCode = f"{self.name_}:([{keyColDef}] {nl} {nonKeyColDef} {nl} );"
@@ -129,7 +129,7 @@ class DataGrid:
         qcode = f''' 
             KDB_ROOT:"{KDB_ROOT}";
             TABLEROOT: hsym `$(KDB_ROOT,"{partitionValue}/","{self.name_}/");
-            TABLEROOT set .Q.en[hsym `KDB_ROOT] 0!{self.name_}_upd;
+            TABLEROOT set .Q.en[hsym `$KDB_ROOT] 0!{self.name_}_upd;
         '''
         self._sendSync(qconnection,qcode)
     def kdbInitPartitionTable(self, partitionValue,qconnection:qconnection):
