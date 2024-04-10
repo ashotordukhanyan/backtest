@@ -116,7 +116,7 @@ class EnsembleTrader(Trader):
 def getAllSignals(sd:date,ed:date,AVEL_SIGNAL_CUTOFFS = (-1.5,1.5),
                   ARIMA_TARGET='c2cbn',
                   NEWS_SENTIMENT_CUTOFFS=[0.,0.3],
-                  NEWS_UNIVERSE=None)->pd.DataFrame:
+                  NEWS_UNIVERSE='IWV')->pd.DataFrame:
     arimaS = ARIMASignal().retrieveSignal(sd,ed,target=ARIMA_TARGET,columns=\
         ['sym', 'date', 'target', 'prediction', 'predicted_se', 'model_order','modelP', 'modelQ'])
     avelS = AvelanedaSignal().retrieveSignal(sd,ed,columns=['sym', 'date', 'signal', 'oualpha', 'ougamma', 'oubeta'])
