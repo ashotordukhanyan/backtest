@@ -25,19 +25,25 @@ from sklearn.linear_model import LinearRegression,Ridge,Lasso
 from sklearn.metrics import r2_score
 from sklearn.base import  BaseEstimator
 import numpy as np
+import xgboost as xgb
+from dataclasses import dataclass,field
+
+
+
+@dataclass
 class EnsembleParams(TraderParams):
     ''' Parameters for the ensemble strategy '''
     avel_signal_cufoffs: Tuple[float,float] = (-1.5,1.5)
     arima_target: str = 'c2cbn'
     news_sentiment_cutoffs: Tuple[float,float] = (0.,0.3)
-    regressor : str = 'Linear' # #Ridge or Lasso or Linear
-    features : List[str] = [
+    regressor : str = 'XGB' # #Ridge or Lasso or Linear or XGB
+    features : List[str] =  field(default_factory=lambda: [
         'prediction', 'predicted_se',  # from ARIMA ( also modelP, modelQ )?
         'signal', 'oualpha', 'ougamma', 'oubeta',  # from Avelaneda ?
         'Sentiment', 'Mentions', 'Relevance', 'Confidence',  # from Alexandria
         'ADVD', 'beta', 'volatility', 'etf',
         'has_arima_signal', 'has_avel_signal', 'has_news_signal'
-    ]
+    ])
 
 DEFAULT_ENSEMBLE_PARAMS = EnsembleParams(universe='IWV', target='o2cbn')
 
@@ -57,19 +63,28 @@ class EnsembleTrader(Trader):
         signals['has_news_signal'] = signals['Mentions'].notnull().astype(int)
         return signals
     def fit(self,signals:pd.DataFrame) -> BaseEstimator:
+        columnTransformations = []
         numerical_features = [ f for f in self.params_.features if f not in ['etf','has_arima_signal','has_avel_signal','has_news_signal']]
-        rescale = make_pipeline(SimpleImputer(missing_values=pd.NA, strategy='constant', fill_value=0),StandardScaler())
-        etfOneHot = make_pipeline(SimpleImputer(missing_values='',strategy='constant',fill_value='SPY'),OneHotEncoder())
-        transformer = ColumnTransformer( [
-            ('rescale', rescale, numerical_features),
-            ('etfs', etfOneHot, ['etf']),
-        ])
+        if numerical_features:
+            rescale = make_pipeline(SimpleImputer(missing_values=pd.NA, strategy='constant', fill_value=0),StandardScaler())
+            columnTransformations.append(('rescale', rescale, numerical_features) )
+
+        categorical_features  = [ f for f in self.params_.features if f in [ 'etf' ]]
+        if categorical_features:
+            etfOneHot = make_pipeline(SimpleImputer(missing_values='', strategy='constant', fill_value='SPY'),
+                                      OneHotEncoder())
+            columnTransformations.append(('etfs', etfOneHot, categorical_features))
+
+        transformer = ColumnTransformer(columnTransformations)
+
         if self.params_.regressor == 'Linear':
             regressor = LinearRegression()
         elif self.params_.regressor== 'Ridge':
             regressor = Ridge()
         elif self.params_.regressor == 'Lasso':
             regressor = Lasso()
+        elif self.params_.regressor == 'XGB':
+            regressor = xgb.XGBRegressor()
         else :
             raise Exception(f"Unknown regressor {self.params_.regressor}")
 
@@ -79,7 +94,7 @@ class EnsembleTrader(Trader):
         model.fit(signals[self.params_.features],ytrue)
         ypred = model.predict(signals[self.params_.features])
         r2 = r2_score(ytrue,ypred)
-        logging.info(f'Fitted model with R2={r2}')
+        #logging.info(f'Fitted model with R2={r2}')
         NUM_BUCKETS = 5
         quantiles = [np.quantile(ypred,x) for x in np.arange(0,1,1/NUM_BUCKETS)]
         return ReturnsEstimator(model,r2,quantiles)
@@ -106,12 +121,12 @@ class EnsembleTrader(Trader):
                                     NEWS_SENTIMENT_CUTOFFS=self.params_.news_sentiment_cutoffs, NEWS_UNIVERSE=self.params_.universe)
             model = self.fit(self._preprocess(signals))
             inSampleR2,inSampleQuantiles = self.score(self._preprocess(signals), model)
-            logging.info(f'In Sample R2={inSampleR2:.4f} Bucket returns {["{:.2f}".format(x) for x in inSampleQuantiles]}')
-            logging.info(f'In Sample R2={inSampleR2:.4f} Buckets        {["{:.2f}".format(x) for x in model.prediction_quantiles_]}')
+            logging.info(f'In Sample R2={inSampleR2:.4f} Bucket returns {["{:.4f}".format(x) for x in inSampleQuantiles]}')
+            logging.info(f'In Sample R2={inSampleR2:.4f} Buckets        {["{:.4f}".format(x) for x in model.prediction_quantiles_]}')
             testSignals = getAllSignals(TEST_PERIOD_START,TEST_PERIOD_END,AVEL_SIGNAL_CUTOFFS=self.params_.avel_signal_cufoffs,ARIMA_TARGET=self.params_.arima_target,
                                         NEWS_SENTIMENT_CUTOFFS=self.params_.news_sentiment_cutoffs, NEWS_UNIVERSE=self.params_.universe)
             r2,quantiles = self.score(self._preprocess(testSignals),model)
-            logging.info(f'Validation R2={r2} Bucket returns {["{:.2f}".format(x) for x in quantiles]}')
+            logging.info(f'Validation R2={r2:.4f} Bucket returns {["{:.4f}".format(x) for x in quantiles]}')
 @cached_df
 def getAllSignals(sd:date,ed:date,AVEL_SIGNAL_CUTOFFS = (-1.5,1.5),
                   ARIMA_TARGET='c2cbn',
@@ -147,7 +162,8 @@ def getAllSignals(sd:date,ed:date,AVEL_SIGNAL_CUTOFFS = (-1.5,1.5),
 if __name__ == '__main__':
     import logging
     logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s',filename=None)
-    strategy = EnsembleTrader()
+    smallParams = EnsembleParams(universe='IWV', target='o2cbn', regressor='Linear', features = [ 'prediction',"signal","Sentiment" ])
+    strategy = EnsembleTrader(params=smallParams)
     logging.info('Starting training')
     strategy.runTraining()
     logging.info('Training done')
