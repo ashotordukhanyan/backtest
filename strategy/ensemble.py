@@ -119,6 +119,9 @@ class EnsembleTrader(Trader):
             logging.info(f'Training for {TRAIN_PERIOD_START} - {TRAIN_PERIOD_END} Testing for {TEST_PERIOD_START} - {TEST_PERIOD_END}')
             signals = getAllSignals(TRAIN_PERIOD_START,TRAIN_PERIOD_END,AVEL_SIGNAL_CUTOFFS=self.params_.avel_signal_cufoffs,ARIMA_TARGET=self.params_.arima_target,
                                     NEWS_SENTIMENT_CUTOFFS=self.params_.news_sentiment_cutoffs, NEWS_UNIVERSE=self.params_.universe)
+            #remove outliers
+            OUTLIER_RETURN_CUTOFF = 0.5
+            signals = signals[(signals.c2c.abs()<=OUTLIER_RETURN_CUTOFF) & (signals.o2c.abs()<=OUTLIER_RETURN_CUTOFF)]
             model = self.fit(self._preprocess(signals))
             inSampleR2,inSampleQuantiles = self.score(self._preprocess(signals), model)
             logging.info(f'In Sample R2={inSampleR2:.4f} Bucket returns {["{:.4f}".format(x) for x in inSampleQuantiles]}')

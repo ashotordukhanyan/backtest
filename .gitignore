@@ -2,3 +2,5 @@
 /dma.pickle
 /cache.sqlite
 /ishares/
+/.idea/
+/ishares/logs/*.log

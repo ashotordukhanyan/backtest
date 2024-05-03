@@ -10,7 +10,8 @@ class CT(Enum):
     DATE = 'datetime64[s]','date', qtemporal.QDATE_LIST
     DATETIME = 'datetime64[s]','datetime', qtemporal.QDATETIME_LIST
     F32 = 'float32','real', qtemporal.QFLOAT_LIST
-    I64 = 'int64','long', qtemporal.QLONG_LIST
+    I64 =  'int64','long', qtemporal.QLONG_LIST
+    I64WNA = 'Int64', 'long', qtemporal.QLONG_LIST
     I8 = 'int8','int', qtemporal.QINT_LIST
     STR = 'string','', qtemporal.QSTRING_LIST
     SYMBOL = 'string','sym', qtemporal.QSYMBOL_LIST
@@ -42,8 +43,13 @@ class ColumnDef:
     converter: Callable = None #converted is called while parsting file to pandas dataframe
     transformer: Callable = None #transformer is called after the file is read into pandas dataframe
     isPartition: bool = False #is this a kdb partition column
+    csvOrigName: str = None #name of the column in the csv file if different from the name in the dataframe
     def isDate(self):
         return self.type in [CT.DATE,CT.DATETIME]
+    @property
+    def csvName(self):
+        return self.csvOrigName if self.csvOrigName is not None else self.name
+
 
 class DataGrid:
     ''' Class that abstracts between pandas dataframe and partitioned kdb table
@@ -52,13 +58,21 @@ class DataGrid:
         self.name_ = name
         self.columns_ = columns
 
+    def columnNameMapper(self):
+        ''' Remapper of names from dataframe to what we want them called '''
+        mapper = {}
+        for c in self.columns_:
+            if c.csvOrigName is not None and c.csvOrigName != c.name:
+                mapper[c.csvOrigName] = c.name
+        return mapper
+
     @staticmethod
     def _getKDBtype(c:ColumnDef):
         return c.type.kdbtype
     def readCsvChunk(self,fileName:str,rows:int,startRow:int=0, sep:str='\t', usecols=None)->pd.DataFrame:
-        dtypes = {c.name:c.type.pandatype for c in self.columns_ if c.converter is None and not c.isDate()}
-        converters = {c.name:c.converter for c in self.columns_ if c.converter is not None}
-        datecols = [c.name for c in self.columns_ if c.isDate() and not c.transformer]
+        dtypes = {c.csvName:c.type.pandatype for c in self.columns_ if c.converter is None and not c.isDate()}
+        converters = {c.csvName:c.converter for c in self.columns_ if c.converter is not None}
+        datecols = [c.csvName for c in self.columns_ if c.isDate() and not c.transformer]
         df = pd.read_csv(fileName, sep=sep,dtype=dtypes,converters=converters,parse_dates=datecols,nrows=rows,skiprows=range(1,int(startRow)), usecols=usecols)
         for c in self.columns_:
             if c.transformer is not None:
@@ -66,6 +80,9 @@ class DataGrid:
                     df[c.name] = c.transformer(df)
                 else:
                     df[c.name] = [] ## for schema consistency sake
+        mapper = self.columnNameMapper()
+        if mapper and len(mapper) > 0:
+            df.rename(columns=mapper,inplace=True)
         return df
 
     def getKeyColumns(self) -> List[ColumnDef]:
