@@ -102,7 +102,7 @@ class DataGrid:
         return meta
 
     def _sendSync(self, qconnection, qcode, *parameters):
-        logging.warning(f'EXECUTING {qcode}')
+        logging.debug(f'EXECUTING {qcode}')
         return qconnection.sendSync(qcode, *parameters)
     def kdbInitConnection(self,qconnection:qconnection):
         ''' Initialize the provided connection by creating the table if it does not alread exist'''
@@ -168,7 +168,7 @@ class DataGrid:
         typedCols = []
         for c in self.columns_:
             if columns is None or len(columns) == 0 or c.name in columns:
-                typedCols.append(f'`float${c.name}' if c.type in [CT.I64,CT.I8, CT.LONG] else c.name)
+                typedCols.append(f'`float${c.name}' if c.type in [CT.I64,CT.I8, CT.LONG,CT.I64WNA] else c.name)
         return ', '.join(typedCols)
 
     def castToPython(self, df: pd.DataFrame):

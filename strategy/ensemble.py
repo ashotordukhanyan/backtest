@@ -130,6 +130,24 @@ class EnsembleTrader(Trader):
                                         NEWS_SENTIMENT_CUTOFFS=self.params_.news_sentiment_cutoffs, NEWS_UNIVERSE=self.params_.universe)
             r2,quantiles = self.score(self._preprocess(testSignals),model)
             logging.info(f'Validation R2={r2:.4f} Bucket returns {["{:.4f}".format(x) for x in quantiles]}')
+
+def filterByUniverse(data:pd.DataFrame,universe:str, dateColName:str = 'date', symColName ='sym')->pd.DataFrame:
+    ''' Filter the data by universe '''
+    if universe is not None:
+        ## restrict news only to symbols that were in a given composition as of.
+        ## compositions are stored for month-ends only
+        sd = data[dateColName].min()
+        ed = data[dateColName].max()
+        compositions = get_composition_history(universe, sd - timedelta(days=45), ed)
+        originalColumnns = data.columns
+        data[f'{dateColName}MonthEnd'] = data[dateColName].apply(get_last_trading_month_end)
+        data = pd.merge(data, compositions[['ticker', 'asof_date']], left_on=[symColName, f'{dateColName}MonthEnd'],
+                         right_on=['ticker', 'asof_date'], suffixes=('', '_comp'),how='inner')
+        return data[originalColumnns]
+    else:
+        return data
+
+
 @cached_df
 def getAllSignals(sd:date,ed:date,AVEL_SIGNAL_CUTOFFS = (-1.5,1.5),
                   ARIMA_TARGET='c2cbn',

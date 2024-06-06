@@ -4,7 +4,7 @@ import datetime
 from utils.datagrid import CT, ColumnDef
 from strategy.base import TradingSignal
 import logging
-
+from typing import List
 #TM_FILE = r'C:\Users\orduk\OneDrive\Documents\ExtractAlpha\TM1_History_2000_202312.zip'
 #CAM_FILE = r'C:\Users\orduk\OneDrive\Documents\ExtractAlpha\CAM1_History_2005_202312.zip'
 
@@ -12,6 +12,8 @@ class BaseEADataset(TradingSignal):
     ''' Base class for ExtractAlpha datasets '''
     def __init__(self,name:str,columns):
         super().__init__(name,columns)
+    def dateCol(self):
+        return 'Date'
     def load_df_to_kdb(self, fileName: str, qc: qconnection, KDB_ROOT: str):
         '''
             Load  csv file to kdb
@@ -86,4 +88,8 @@ class EACAM(BaseEADataset):
     ]
     def __init__(self):
         super().__init__('eacam',self._SCHEMA)
+    def retrieveSignal(self, startDate:datetime.date, endDate:datetime.date, syms:List[str] = None, columns:List[str] = [],
+                       additionalWhereClause:str = None,symColumnName = 'sym'):
+        additionalWhereClause = 'CAM1 <> 0N' + (","+additionalWhereClause if additionalWhereClause is not None else "")
+        return super().retrieveSignal(startDate,endDate,syms,columns,additionalWhereClause,symColumnName = symColumnName)
 

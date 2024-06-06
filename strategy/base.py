@@ -79,14 +79,17 @@ class TradingSignal(DataGrid):
     def __init__(self, tableName:str, schema:List[ColumnDef]):
         super().__init__(tableName, schema)
 
-    def retrieveSignal(self, startDate:date, endDate:date, syms:List[str] = None, columns:List[str] = [], additionalWhereClause:str = None):
+    def dateCol(self):
+        return 'date'
+    def retrieveSignal(self, startDate:date, endDate:date, syms:List[str] = None, columns:List[str] = [], additionalWhereClause:str = None,
+                       symColumnName = 'sym'):
         '''Retrieve signal for given period'''
         if startDate is None and endDate is None and syms is None:
             raise Exception("Must specify a where condition")
         startDate,endDate = startDate or date.min,endDate or date.max
-        whereClause = f'where year >= `year$sd, year <=`year$ed,date>=sd,date<=ed'
+        whereClause = f'where year >= `year$sd, year <=`year$ed,{self.dateCol()}>=sd,{self.dateCol()}<=ed'
         if syms is not None:
-            whereClause += ',sym in `$syms'
+            whereClause += f',{symColumnName} in `$syms'
         if additionalWhereClause is not None:
             whereClause += ',' + additionalWhereClause
         query = f'''
