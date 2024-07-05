@@ -1,11 +1,12 @@
 import logging
 from utils.qpthack import qconnection
-from market_data.extractalpha.datasets import EATM,EACAM
+from market_data.extractalpha.datasets import EATM,EACAM,EAEstimize
 
 if __name__ == '__main__':
     logging.basicConfig(filename=None,level=logging.INFO,format='%(levelname)s %(asctime)s %(message)s')
     LOAD_TM = False
-    LOAD_CAM = True
+    LOAD_CAM = False
+    LOAD_ESTIMIZE=True
     with qconnection.QConnection('localhost', 12345, pandas=True) as q:
         KDB_ROOT = "c:/KDB_MARKET_DATA2/"
         if LOAD_TM:
@@ -18,3 +19,9 @@ if __name__ == '__main__':
             CAM_FILE = r'C:\Users\orduk\OneDrive\Documents\ExtractAlpha\CAM1_History_2005_202312.zip'
             cam = EACAM()
             cam.load_df_to_kdb(CAM_FILE, q, KDB_ROOT)
+
+        if LOAD_ESTIMIZE:
+            logging.info('Loading estimize signals model to KDB')
+            ESTIMIZE_SIGNAL_FILE = r'C:\Users\orduk\OneDrive\Documents\ExtractAlpha\estimize-signal-2024q1.zip'
+            eaest = EAEstimize()
+            eaest.load_df_to_kdb(ESTIMIZE_SIGNAL_FILE, q, KDB_ROOT, dryRun=False)

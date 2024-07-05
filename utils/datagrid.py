@@ -73,7 +73,11 @@ class DataGrid:
         dtypes = {c.csvName:c.type.pandatype for c in self.columns_ if c.converter is None and not c.isDate()}
         converters = {c.csvName:c.converter for c in self.columns_ if c.converter is not None}
         datecols = [c.csvName for c in self.columns_ if c.isDate() and not c.transformer]
-        df = pd.read_csv(fileName, sep=sep,dtype=dtypes,converters=converters,parse_dates=datecols,nrows=rows,skiprows=range(1,int(startRow)), usecols=usecols)
+        def to_utc(x):
+            return pd.to_datetime(x,utc=True)
+
+        df = pd.read_csv(fileName, sep=sep,dtype=dtypes,converters=converters,parse_dates=datecols,date_parser=to_utc,
+                         nrows=rows,skiprows=range(1,int(startRow)), usecols=usecols)
         for c in self.columns_:
             if c.transformer is not None:
                 if len(df) > 0:
@@ -83,8 +87,11 @@ class DataGrid:
         mapper = self.columnNameMapper()
         if mapper and len(mapper) > 0:
             df.rename(columns=mapper,inplace=True)
-        return df
+        return self.postProcessCsvChunk(df[ [c.name for c in self.columns_]])
 
+    def postProcessCsvChunk(self,chunk:pd.DataFrame):
+        '''Post process csv chunk'''
+        return chunk
     def getKeyColumns(self) -> List[ColumnDef]:
         return [c for c in self.columns_ if c.isKey]
 
@@ -102,7 +109,7 @@ class DataGrid:
         return meta
 
     def _sendSync(self, qconnection, qcode, *parameters):
-        logging.debug(f'EXECUTING {qcode}')
+        logging.info(f'EXECUTING {qcode}')
         return qconnection.sendSync(qcode, *parameters)
     def kdbInitConnection(self,qconnection:qconnection):
         ''' Initialize the provided connection by creating the table if it does not alread exist'''
