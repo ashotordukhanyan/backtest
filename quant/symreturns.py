@@ -171,7 +171,7 @@ class SymReturns(DataGrid):
         .miny: exec min `year$date from trades;
         .maxy: exec max `year$date from trades;
         .temp:select {self.getColumnsWithCasts(columns)} from {self.name_} where year within (.miny;.maxy), sym in (exec sym from trades), date in (exec date from trades);
-        .temp2: select date,sym,adjusted_close,close,`float$volume from eodhd_price where year in (.miny;.maxy),sym in (exec sym from trades), date in (exec date from trades);
+        .temp2: select date,sym,adjusted_close,close,`float$volume from eodhd_price where year within (.miny;.maxy),sym in (exec sym from trades), date in (exec date from trades);
         (trades lj 2!.temp) lj 2!.temp2
         }}
         '''
